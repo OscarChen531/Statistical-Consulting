@@ -1,0 +1,256 @@
+---
+title: "Statlog Heart Disease Prediction using Logistic Regression, Lasso and Elastic-Net Regularized Generalized Linear Models, and Principal Component"
+author: "Wei Chieh Chen"
+date: "2025-05-02"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load the required library
+library(glmnet)
+
+# Read the CSV file from the raw GitHub URL
+heart_data <- read.table("https://raw.githubusercontent.com/JavoNazarov/Statlog-Heart-Disease-Prediction/master/HeartData/heart.dat", sep = " ", header = FALSE)
+
+# heart_data <- read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/heart/heart.dat", sep = " ", header = FALSE)
+
+# Rename columns based on the provided table
+colnames(heart_data) <- c("age", "sex", "chest_pain", "blood_press", "serum_chol", 
+                          "blood_sugar", "electrocard", "max_heart_rate", 
+                          "induc_ang", "oldpeak", "peak_st_seg", "major_ves", 
+                          "thal", "presence")
+
+# Convert binary and categorical variables to factors
+heart_data$sex <- as.factor(heart_data$sex)
+heart_data$chest_pain <- as.factor(heart_data$chest_pain)
+heart_data$blood_sugar <- as.factor(heart_data$blood_sugar)
+heart_data$electrocard <- as.factor(heart_data$electrocard)
+heart_data$induc_ang <- as.factor(heart_data$induc_ang)
+heart_data$thal <- as.factor(heart_data$thal)
+
+# Convert heart-disease to binary (0 = absence, 1 = presence)
+heart_data$presence <- ifelse(heart_data$presence == 2, 1, 0)
+```
+
+## Goal
+
+Use the Statlog (Heart) dataset. Fitting three models: GLM, GLMNET, and PCA (first two components). Compute ROC curves for all three models using base R.
+
+
+## Step 1: Load the heart.dat file from the repository
+
+```{r load}
+# Read the CSV file from the raw GitHub URL
+heart_data <- read.table("https://raw.githubusercontent.com/JavoNazarov/Statlog-Heart-Disease-Prediction/master/HeartData/heart.dat", sep = " ", header = FALSE)
+
+# heart_data <- read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/heart/heart.dat", sep = " ", header = FALSE)
+
+# Rename columns based on the provided table
+colnames(heart_data) <- c("age", "sex", "chest_pain", "blood_press", "serum_chol", 
+                          "blood_sugar", "electrocard", "max_heart_rate", 
+                          "induc_ang", "oldpeak", "peak_st_seg", "major_ves", 
+                          "thal", "presence")
+
+# View the first few rows of the data
+head(heart_data)
+```
+
+## Step 2: Verify the Data
+
+From the variable table, the dataset should have 270 rows and 14 columns, as per the Statlog (Heart) dataset description. There are no missing values, as indicated in your table. The column types should match the descriptions:
+  - Continuous: age, rest-bp, serum-chol, max-heart-rate, oldpeak, major-vessels
+  - Binary: sex, fasting-blood-sugar, angina
+  - Categorical: chest-pain, electrocardiographic, thal
+  - Integer: slope, heart-disease (target)
+
+In this Project, the dataset is at the given URL and has 14 columns: 13 predictors and 1 target (heart-disease). heart-disease is coded as 1 (absence) and 2 (presence); convert it to 0 (absence) and 1 (presence) for binary logistic regression. Convert binary and categorical variables (chest-pain, electrocardiographic, thal) to factors for glm compatibility, as glmnet will handle them via model.matrix.
+```{r cars}
+str(heart_data) # Data Structure
+
+# Convert binary and categorical variables to factors
+heart_data$sex <- as.factor(heart_data$sex)
+heart_data$chest_pain <- as.factor(heart_data$chest_pain)
+heart_data$blood_sugar <- as.factor(heart_data$blood_sugar)
+heart_data$electrocard <- as.factor(heart_data$electrocard)
+heart_data$induc_ang <- as.factor(heart_data$induc_ang)
+heart_data$thal <- as.factor(heart_data$thal)
+
+# Convert heart-disease to binary (0 = absence, 1 = presence)
+heart_data$presence <- ifelse(heart_data$presence == 2, 1, 0)
+
+summary(heart_data)
+```
+
+## Step 3: Create ROC Dataframe
+
+The lecture notes loops over thresholds (0.01 to 0.99) to compute TPR and FPR for each threshold. Therefore, we try to mimic and create a reusable function compute_roc_df to apply this logic to all three models. We pre-allocate the ROC_DF data frame with 981 rows (for 981 thresholds). Handling edge cases where the confusion matrix might not be 2x2 (e.g., if all predictions are 0 or 1 at a threshold).
+
+```{r ROC, echo=FALSE}
+# Function to compute ROC data frame for a given set of predicted probabilities
+compute_roc_df <- function(pred_prob, true_labels) {
+  ROC_DF <- data.frame(Level = double(), 
+                     TPR = double(), 
+                     FPR = double())
+  RowCounter <- 0
+  for (inc in seq(0.01, 0.99, 0.001)) {
+    RowCounter <- RowCounter + 1
+    PredY <- as.numeric(pred_prob > inc)
+    ConfMatrix <- table(true_labels, PredY)
+    
+    # Ensure ConfMatrix is 2x2; fill with 0s if necessary
+    if (nrow(ConfMatrix) < 2 || ncol(ConfMatrix) < 2) {
+      temp <- matrix(0, nrow = 2, ncol = 2)
+      rownames(temp) <- c("0", "1")
+      colnames(temp) <- c("0", "1")
+      for (i in rownames(ConfMatrix)) {
+        for (j in colnames(ConfMatrix)) {
+          temp[i, j] <- ConfMatrix[i, j]
+        }
+      }
+      ConfMatrix <- temp
+    }
+    
+    FPR <- ConfMatrix[1, 2] / sum(ConfMatrix[1, ])
+    TPR <- ConfMatrix[2, 2] / sum(ConfMatrix[2, ])
+    
+    ROC_DF[RowCounter, 1] <- inc
+    ROC_DF[RowCounter, 2] <- TPR
+    ROC_DF[RowCounter, 3] <- FPR
+    
+  }
+  return(ROC_DF)
+}
+```
+
+## Step 4: Fit the GLM Model 
+
+- Identify Variable Types: From the variable description table provided earlier:
+  - Continuous: age, rest-bp (resting blood pressure), serum-chol (serum cholesterol), max-heart-rate (maximum heart rate), oldpeak, major-vessels.
+  - Binary: sex, fasting-blood-sugar, angina.
+  - Categorical: chest-pain, electrocardiographic, thal.
+  - Integer: slope, heart-disease (target, already converted to 0/1).
+
+- Health Record Variables: The problem specifies age, blood pressure (rest-bp), cholesterol (serum-chol), and maximum heart rate (max-heart-rate).
+
+- Model 1 (Continuous Only):
+Use only continuous variables: age, rest-bp, serum-chol, max-heart-rate, oldpeak, major-vessels. Fit a glm model with family = "binomial", predict on the same dataset (no train-test split), and compute the ROC curve.
+- Model 2 (Health Record Variables):
+Use age, rest-bp, serum-chol, max-heart-rate.
+Fit a glm model, predict, and compute the ROC curve.
+- Model 3 (All Variables):
+Use all predictors (heart.disease ~ .), as in the original Step 5.
+Fit a glm model, predict, and compute the ROC curve.
+ROC Computation:
+Use the compute_roc_df function (defined in Step 3) to compute ROC curves for each model.
+
+
+```{r glm}
+### Fit Three GLM Models
+# 1. GLM Model (Continuous Variables Only)
+glm_continuous <- glm(presence ~ age + blood_press + serum_chol + max_heart_rate + oldpeak + major_ves, data = heart_data, family = "binomial")
+glm_continuous_pred_prob <- predict(glm_continuous, newdata = heart_data, type = "response")
+glm_continuous_roc_df <- compute_roc_df(glm_continuous_pred_prob, heart_data$presence)
+
+# Summary of GLM (Continuous) Model
+cat("Summary of GLM Model (Continuous Variables):\n")
+print(summary(glm_continuous))
+cat("\n")
+
+# 2. GLM Model (Health Record Variables: age, blood_press, serum_chol, max_heart_rate)
+glm_health <- glm(presence ~ age + blood_press + serum_chol + max_heart_rate, 
+                  data = heart_data, family = "binomial")
+glm_health_pred_prob <- predict(glm_health, newdata = heart_data, type = "response")
+glm_health_roc_df <- compute_roc_df(glm_health_pred_prob, heart_data$presence)
+
+# Summary of GLM (Health Record) Model
+cat("Summary of GLM Model (Health Record Variables):\n")
+print(summary(glm_health))
+cat("\n")
+
+# 3. GLM Model (All Variables)
+glm_all <- glm(presence ~ ., data = heart_data, family = "binomial")
+glm_all_pred_prob <- predict(glm_all, newdata = heart_data, type = "response")
+glm_all_roc_df <- compute_roc_df(glm_all_pred_prob, heart_data$presence)
+
+# Summary of GLM (All Variables) Model
+cat("Summary of GLM Model (All Variables):\n")
+print(summary(glm_all))
+cat("\n")
+```
+
+## Step 5: Fit the GLMNET Model 
+
+Follow the lecture note's approach: create a predictor matrix (MatrixPred) and response vector (VecResponse). Using model.matrix to convert categorical variables to dummy variables, as glmnet requires numeric inputs. Fitting a glmnet model with family = "binomial", predicting with s = 0.1. Then compute the ROC curve using compute_roc_df.
+
+```{r glmnet}
+## Step 5: Fit the GLMNET Model
+
+# Load the required library
+library(glmnet)
+
+MatrixPred <- model.matrix(presence ~ ., data = heart_data)[, -1]
+VecResponse <- heart_data$presence
+ObjGlmNet1 <- glmnet(MatrixPred, VecResponse, family = "binomial")
+glmnet_pred_prob <- predict(ObjGlmNet1, newx = MatrixPred, type = "response", s = 0.1)
+glmnet_roc_df <- compute_roc_df(glmnet_pred_prob, heart_data$presence)
+
+# Summary of GLMNET Model
+cat("Summary of GLMNET Model:\n")
+cat("Coefficients at lambda = 0.1:\n")
+print(coef(ObjGlmNet1, s = 0.1))
+cat("\n")
+```
+
+## Step 6: Fit the PCA Model 
+
+Extract predictors and create a numeric matrix with model.matrix. Perform PCA on the entire dataset using prcomp (base R), scaling the data for consistency. Using the first two principal components as predictors. Fit a glm model on these components (similar to the lecture’s focus on logistic regression). Predict on the same data and compute the ROC curve.
+
+```{r pca}
+## Step 6: PCA Model (First 2 PCs, All Variables)
+# Prepare data for PCA (exclude the target variable)
+features <- heart_data[, -which(names(heart_data) == "presence")]
+features_matrix <- model.matrix(~ . - 1, data = features)
+
+# Perform PCA on all variables using princomp
+pca_all <- princomp(features_matrix, cor = TRUE)
+
+# Extract the first two principal components
+pca_scores <- pca_all$scores[, 1:2]
+pca_data <- data.frame(PC1 = pca_scores[, 1], PC2 = pca_scores[, 2], presence = heart_data$presence)
+
+# Fit GLM on the first two PCs
+pca_glm <- glm(presence ~ PC1 + PC2, data = pca_data, family = "binomial")
+pca_pred_prob <- predict(pca_glm, newdata = pca_data, type = "response")
+pca_roc_df <- compute_roc_df(pca_pred_prob, pca_data$presence)
+
+# Summary of PCA and GLM on PCs
+cat("Summary of PCA Model:\n")
+cat("Component variances:\n")
+print(pca_all$sdev^2)
+cat("\nSummary of GLM Model on First Two PCs:\n")
+print(summary(pca_glm))
+cat("\n")
+```
+
+## Step 7: Plot the ROC Curves
+
+Plot the GLM model’s ROC curve first, then add GLMNET and PCA curves using lines().
+Add a diagonal line (abline) to represent a random classifier, as is standard in ROC plots. Include a legend to distinguish the three models, aligning with the template’s visualization approach. Ensure xlim and ylim are [0, 1] for a proper ROC plot.
+
+```{r rocplot}
+## Step 7: Plot ROC Curves
+# Plot ROC curves using base R
+plot(glm_continuous_roc_df$FPR, glm_continuous_roc_df$TPR, type = "l", col = "blue", 
+     xlab = "False Positive Rate (FPR)", ylab = "True Positive Rate (TPR)", 
+     main = "ROC Curves Comparison", xlim = c(0, 1), ylim = c(0, 1))
+lines(glm_health_roc_df$FPR, glm_health_roc_df$TPR, col = "purple")
+lines(glm_all_roc_df$FPR, glm_all_roc_df$TPR, col = "black")
+lines(glmnet_roc_df$FPR, glmnet_roc_df$TPR, col = "red")
+lines(pca_roc_df$FPR, pca_roc_df$TPR, col = "green")
+abline(a = 0, b = 1, lty = 2, col = "gray")
+legend("bottomright", legend = c("GLM (Continuous)", "GLM (Health Record)", "GLM (All)", 
+                                 "GLMNET", "PCA (First Two PCs)"), 
+       col = c("blue", "purple", "black", "red", "green"), lty = 1)
+```

@@ -1,0 +1,284 @@
+---
+title: "Multiple Regression Analysis on Lo 30 Portfolio Returns: A Fama–French 3- and 5-Factor Approach"
+author: | 
+  | Wei Chieh Chen
+  | Syracuse University
+date: "2025-04-01"
+output: 
+  beamer_presentation:
+    theme: "AnnArbor"
+    colortheme: "dolphin"
+    fonttheme: "structurebold"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(data.table)
+# Load required libraries
+library(readr)
+library(dplyr)
+library(lubridate)
+library(car)
+library(nortest)
+# Load the lmtest package for the Breusch-Pagan test
+library(lmtest)
+library(broom)
+
+#####################################################
+# Create a temporary file for the ZIP archive
+temp_zip <- tempfile(fileext = ".zip")
+
+# Download the ZIP file
+download.file("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_weekly_CSV.zip", temp_zip)
+
+# List the files in the ZIP archive and assume the CSV is the first file
+files_in_zip <- unzip(temp_zip, list = TRUE)$Name
+csv_file_name <- files_in_zip[1]
+
+# Extract the CSV file to a temporary directory
+extracted_path <- tempdir()
+unzip(temp_zip, files = csv_file_name, exdir = extracted_path)
+
+# Construct the full path to the extracted CSV file
+csv_path <- file.path(extracted_path, csv_file_name)
+
+# Read the CSV file using fread
+ff3w_data <- fread(csv_path)
+head(ff3w_data)
+
+colnames(ff3w_data)[1] <- "Date"
+
+# Optionally, remove the temporary ZIP file
+unlink(temp_zip)
+
+######################################################
+# Create a temporary file for the ZIP archive
+temp_zip <- tempfile(fileext = ".zip")
+
+# Download the ZIP file
+download.file("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip", temp_zip)
+
+# List the files in the ZIP archive and assume the CSV is the first file
+files_in_zip <- unzip(temp_zip, list = TRUE)$Name
+csv_file_name <- files_in_zip[1]
+
+# Extract the CSV file to a temporary directory
+extracted_path <- tempdir()
+unzip(temp_zip, files = csv_file_name, exdir = extracted_path)
+
+# Construct the full path to the extracted CSV file
+csv_path <- file.path(extracted_path, csv_file_name)
+
+# Read the CSV file using fread
+ff5d_data <- fread(csv_path)
+head(ff5d_data)
+
+colnames(ff5d_data)[1] <- "Date" 
+
+# Optionally, remove the temporary ZIP file
+unlink(temp_zip)
+
+######################################################
+# Create a temporary file for the ZIP archive
+temp_zip <- tempfile(fileext = ".zip")
+
+# Download the ZIP file
+download.file("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_ME_Daily_CSV.zip", temp_zip)
+
+# List the files in the ZIP archive and assume the CSV is the first file
+files_in_zip <- unzip(temp_zip, list = TRUE)$Name
+csv_file_name <- files_in_zip[1]
+
+# Extract the CSV file to a temporary directory
+extracted_path <- tempdir()
+unzip(temp_zip, files = csv_file_name, exdir = extracted_path)
+
+# Construct the full path to the extracted CSV file
+csv_path <- file.path(extracted_path, csv_file_name)
+
+# Read the CSV file using fread
+pfosd_data <- fread(csv_path, header = TRUE)
+head(pfosd_data)
+
+# Optionally, remove the temporary ZIP file
+unlink(temp_zip)
+colnames(pfosd_data)[1] <- "Date" 
+head(pfosd_data)
+
+# Process Fama-French 3-Factor data:
+ff3 <- ff3w_data %>%
+  mutate(Date = ymd(as.character(Date))) %>%    # Convert Date column to Date format
+  filter(Date >= ymd("1963-07-01"))              # Restrict data from July 1, 1963 onward
+
+# Process Fama-French 5-Factor data:
+ff5 <- ff5d_data %>%
+  mutate(Date = ymd(as.character(Date))) %>%  # Convert Date column to Date format
+  filter(Date >= ymd("1963-07-01"))           # Restrict data from July 1, 1963 onward
+
+# Process the portfolios data:
+portfolios <- pfosd_data %>%
+  mutate(Date = ymd(as.character(Date))) %>%  
+  filter(Date >= ymd("1963-07-01"))
+
+# Adjust column names: Use make.names() to handle spaces and special characters
+colnames(portfolios) <- make.names(colnames(portfolios))
+# Assume that "Lo 30" becomes "Lo.30" and rename it to "Lo30" for convenience.
+portfolios <- portfolios %>%
+  rename(Lo30 = Lo.30)
+
+# Merge portfolios with Fama-French 3-Factor data:
+data_3f <- inner_join(portfolios, ff3, by = "Date")
+
+# Merge portfolios with Fama-French 5-Factor data:
+data_5f <- inner_join(portfolios, ff5, by = "Date")
+
+# Ensure numeric conversion for model variables
+data_3f$`Mkt-RF` <- as.numeric(as.character(data_3f$`Mkt-RF`))
+data_3f$SMB <- as.numeric(as.character(data_3f$SMB))
+data_3f$HML <- as.numeric(as.character(data_3f$HML))
+data_3f$Lo30 <- as.numeric(as.character(data_3f$Lo30))
+
+# Rename column for convenience
+colnames(data_3f)[which(names(data_3f) == "Mkt-RF")] <- "MKTRF"
+
+# Fit the model: Lo30 ~ MKTRF + SMB + HML
+model_3f <- lm(Lo30 ~ MKTRF + SMB + HML, data = data_3f)
+summary(model_3f)
+
+data_5f$MKTRF  <- as.numeric(as.character(data_5f$MKTRF))
+data_5f$SMB    <- as.numeric(as.character(data_5f$SMB))
+data_5f$HML    <- as.numeric(as.character(data_5f$HML))
+data_5f$RMW    <- as.numeric(as.character(data_5f$RMW))
+data_5f$CMA    <- as.numeric(as.character(data_5f$CMA))
+data_5f$Lo30   <- as.numeric(as.character(data_5f$Lo30))
+
+# 5-Factor Regression: Lo 30 ~ Mkt-RF + SMB + HML + RMW + CMA
+colnames(data_5f)[21] <- "MKTRF"
+model_5f <- lm(Lo30 ~ MKTRF + SMB + HML + RMW + CMA, data = data_5f)
+summary(model_5f)
+```
+
+## Introduction
+
+\textbf{Overview:}
+This project demonstrates how to perform two multiple linear regression analyses using the “Lo 30” portfolio returns as the response variable. Two sets of factor datasets are used:
+
+- Fama–French 3-Factor Model: Market excess return (Mkt-RF), SMB, and HML.
+
+- Fama–French 5-Factor Model: The above factors plus RMW and CMA.
+
+Both models are estimated for data from July 1, 1963, onward.
+
+## Data Import
+\textbf{Summary of Steps:}
+
+- Downloaded ZIP archives for three datasets from online sources:
+
+  - Fama-French 3-Factor Data (Weekly)
+
+  - Fama-French 5-Factor Data (Daily)
+
+  - Portfolios Data (Daily)
+
+- Created temporary ZIP files and extracted the first CSV file from each archive.
+
+- Read the CSV files using fread() and previewed the data.
+
+- Renamed the first column to "Date" for consistency.
+
+- Optionally removed temporary ZIP files to clean up.
+
+## Data Preparation & Merging the Datasets
+
+\textbf{Data Preparation Summary:}
+
+- Convert "Date" columns to proper Date objects using ymd().
+
+- Filter each dataset to include only records from July 1, 1963 onward.
+
+- Adjust column names in the portfolios dataset with make.names() and rename "Lo 30" (i.e., "Lo.30") to "Lo30".
+
+\textbf{Merging Summary:}
+
+- Merge the portfolios data with the Fama-French 3-Factor data by the "Date" variable.
+
+- Merge the portfolios data with the Fama-French 5-Factor data similarly to ensure matching dates for regression analysis.
+
+## Display summary of merged data (example)
+<div style="font-size: 0.8em;">
+```{r, echo=TRUE}
+summary(data_3f[, c(21:23)])
+```
+
+## Regression Analysis – Fama-French 3-Factor Model
+
+- Fit the 3-Factor regression model and display the summary.
+
+```{r reg1, echo=FALSE, message=FALSE, warning=FALSE}
+# Tidy the model output and select the coefficient table columns
+coef_table <- tidy(model_3f)[,1:5]
+# Display the table with a caption
+knitr::kable(coef_table, caption = "Coefficient Table for Fama-French 3-Factor Model")
+```
+
+
+## Regression Analysis – Fama-French 3-Factor Model
+\textbf{Interpretation:}
+
+- The intercept, MKTRF, and SMB are statistically significant.
+
+- HML is not significant.
+
+- Approximately 21% of the variance in Lo30 is explained.
+
+
+
+## Regression Analysis – Fama-French 5-Factor Model
+
+```{r reg2, echo=FALSE, message=FALSE, warning=FALSE}
+# Tidy the model output and select the coefficient table columns
+coef_table <- tidy(model_5f)[,1:5]
+# Display the table with a caption
+knitr::kable(coef_table, caption = "Coefficient Table for Fama-French 5-Factor Model")
+```
+
+- All predictors are statistically significant.
+
+- The model explains over 98% of the variance in Lo30.
+
+## Regression Diagnostics – Fama-French Models
+
+The following plots assess the regression assumptions (linearity, homoscedasticity, normality, and influential observations) for both models.  
+The top row shows the diagnostics for the 3-Factor model, while the bottom row shows those for the 5-Factor model.
+
+```{r diag-both, fig.height=5, fig.width=10, echo=FALSE}
+# Set up the plotting area for 8 plots (2 rows x 4 columns)
+par(mfrow = c(2, 4))
+
+# Diagnostic plots for the 3-Factor model
+plot(model_3f, which = 1:4)
+
+# Diagnostic plots for the 5-Factor model
+plot(model_5f, which = 1:4)
+```
+
+
+
+## Conclusion & Next Steps
+\textbf{Key Findings:}
+
+- The 3-Factor model shows moderate explanatory power.
+
+- The 5-Factor model fits exceptionally well but shows some departures from classical assumptions.
+
+\textbf{Diagnostics Summary:}
+
+- Both models have issues with non-normality and heteroscedasticity.
+
+- Future work should consider robust standard errors or alternative estimation techniques.
+
+\textbf{Next Steps:}
+
+- Explore model refinements.
+
+- Validate findings with out-of-sample tests.

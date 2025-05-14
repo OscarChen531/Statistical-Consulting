@@ -1,0 +1,171 @@
+---
+title: "Q&A Code"
+author: "Wei Chieh Chen"
+date: "2025-03-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Task: 
+We want to generate a random sample of size n from a Normal distribution with fix mean mu and fix standard deviation sigma. We then explore R’s built-in cut() function (without using any additional packages) to categorize the data. Next, we compute and compare empirical (sample) quantiles and the corresponding theoretical (population) quantiles, plot them against each other in a scatterplot, and finally create a normal QQ plot using only base R functions to assess how closely the sampled data follow the specified Normal distribution.
+
+## Solution
+
+### Step 1: Set Parameters
+
+We need to specify the sample size n as well as the mean \(\mu\) and standard deviation \(\sigma\) of the Normal distribution. Code Explanation: n determines how many random values to draw. mu and sigma define the normal distribution we’re sampling from. set.seed(...) ensures you’ll get the same random sample each time the code runs (useful for debugging and comparing results).
+
+```{r}
+set.seed(2023) # Sets random generator seed for consistent output
+
+# -------------------------------------------------------
+# Set parameters and generate sample data
+# -------------------------------------------------------
+n <-  sample(1:3000, 1)    # Number of observations
+mu <- 5       # Fix Mean
+sigma <- 2    # Fix Standard deviation
+```
+
+### Step 2: Generate a Random Sample Data
+
+Code Explanation: rnorm(n, mean, sd) draws n samples from a \(N(\mu,\sigma)\) distribution. The result is a numeric vector stored in sample_data.
+
+```{r}
+sample_data <- rnorm(n, mean = mu, sd = sigma)
+```
+
+### Step 3: Explore the cut function
+
+Code Explanation: cut(...) takes a numeric vector (here sample_data) and “cuts” it into intervals (bins). breaks = c(-Inf, ..., Inf) ensures you capture very low and very high values. The output (category_factor) is a factor whose levels correspond to the intervals you defined.
+
+```{r}
+# Define breakpoints: break the data into 7 categories: from mu +/- 3*sigma
+# (-Inf, mu-3*sigma]    (mu-3*sigma, mu-2*sigma]     (mu-2*sigma, mu-sigma]   
+# (mu-sigma,mu]     (mu,mu+sigma]     (mu+sigma,mu+2*sigma]    
+# (mu+2*sigma,mu+3*sigma]  (mu+3*sigma, Inf] 
+
+break_points <- c(-Inf, mu - 3*sigma, mu - 2*sigma, mu - sigma, mu, 
+                  mu + sigma, mu + 2 *sigma, mu + 3*sigma, Inf)
+
+categorical_factor  <- cut(sample_data, breaks = break_points)
+
+# See how many data points fall into each category
+print(table(categorical_factor))
+```
+
+### Step 4: Compute Empirical (Sample) Quantiles
+
+SOLUTION 1:
+We define the empirical distribution function (CDF) for any $t$ by:
+\[
+  \hat{F}(t) \;=\; \frac{1}{n}\sum_{i=1}^n \mathbf{1}\{x_i \le t\}.
+\]
+In practice, we sort the data in ascending order, $x_{(1)} \le x_{(2)} \le \cdots \le x_{(n)}$. The inverse CDF (or \emph{empirical quantile}) at probability $p$ is given by:
+\[
+  \hat{F}^{-1}(p) \;=\; \min\{x : \hat{F}(x) \ge p\},
+\]
+which can be implemented simply by:
+\[
+  \hat{F}^{-1}(p) \;=\; x_{(\lceil p\,n\rceil)}.
+\]
+
+To see how well our sample aligns with its assumed distribution, we compute:
+\[
+  \text{empirical quantiles: } \hat{F}^{-1}(p), 
+  \quad \text{theoretical quantiles: } Q_{\text{theory}}(p).
+\]
+For a normal distribution $N(\mu,\sigma)$, 
+\[
+  Q_{\text{theory}}(p) \;=\; \mu \;+\; \sigma\,z_{p},
+\]
+where $z_{p}$ is the standard normal $p$-quantile.
+
+SOLUTION 2:
+Reference URL: https://library.virginia.edu/data/articles/understanding-q-q-plots
+
+Code Explanation: quantile(sample_data, probs = probs) calculates the quantiles of sample_data at the probability points. 
+
+```{r}
+# ---------------------------------------------------------
+# Empirical CDF F_hat(t) and its inverse F_hat_inv(p)
+# ---------------------------------------------------------
+# Sort the data
+sample_data_sorted <- sort(sample_data)
+
+# Empirical CDF function: F_hat(t)
+F_hat <- function(sample_data, t) {
+  return(sum(sample_data <= t) / length(sample_data))
+}
+
+# Empirical CDF inverse: 
+#    Given p in [0,1], return the smallest x_i s.t. F_hat(x_i) >= p.
+#    (One simple way is to choose x_sorted[ceiling(p * n)] if p>0;
+#     for p=0, we can return the minimum, etc.)
+F_hat_inv <- function(sample_data_sorted, p) {
+  n <- length(sample_data_sorted)
+  if (p <= 0) return(sample_data_sorted[1])
+  if (p >= 1) return(sample_data_sorted[n])
+  idx <- ceiling(p * n)
+  return(sample_data_sorted[idx])
+}
+
+# -----------------------------------------------
+# Compare empirical vs. theoretical quantiles
+# -----------------------------------------------
+# Let's pick a set of probabilities:
+probs <- seq(0, 1, 0.01) 
+
+# a) Empirical quantiles using F_hat_inv() "by hand"
+sample_quantiles <- sapply(probs, function(p) F_hat_inv(sample_data_sorted, p))
+
+# b) Theoretical quantiles from N(mu, sigma)
+population_quantiles <- qnorm(probs, mean = mu, sd = sigma)
+
+cat("\nEmpirical quantiles (by hand):\n")
+print(sample_quantiles)
+cat("\nTheoretical quantiles:\n")
+print(population_quantiles)
+
+
+################ Sol 2 #################################
+#-------------------------------------------------------
+# Compute sample quantiles
+#-------------------------------------------------------
+# Generates the quantiles for a normal distribution from 0 to 1 by increments of 0.01
+# probs <- seq(0, 1, 0.01)   
+# sample_quantiles <- quantile(sample_data, probs = probs)
+#-------------------------------------------------------
+# Compute theoretical (population) quantiles
+#-------------------------------------------------------
+# For a Normal(mu, sigma), the quantiles are qnorm(probs, mean = mu, sd = sigma)
+# population_quantiles <- qnorm(probs, mean = mu, sd = sigma)
+```
+
+### Scatterplot & QQ Plot
+
+Code Explanation: Using base R’s qqnorm() compares the sample quantiles of the data to the theoretical quantiles of \(N(0,1)\). If the data truly come from a Normal distribution (potentially with shift/scale), the points should lie near the straight line qqline().
+
+```{r}
+#-------------------------------------------------------
+# Create a scatterplot of sample vs. theoretical quantiles
+#-------------------------------------------------------
+plot(population_quantiles, sample_quantiles,
+     main = "Empirical vs Theoretical Quantiles",
+     xlab = "Theoretical Quantiles (N(mu, sigma))",
+     ylab = "Empirical Quantiles (sample)")
+abline(0, 1, col = "blue")  # Add reference line
+
+#-------------------------------------------------------
+# Create a normal QQ plot (base R)
+#-------------------------------------------------------
+# Using qqnorm (centers and scales for standard normal)
+qqnorm(sample_data,
+       main = "Normal Q-Q Plot (Base R)",
+       xlab = "Theoretical Quantiles (N(0,1))",
+       ylab = "Sample Quantiles")
+qqline(sample_data, col = "red", lty = 2)
+```
+
